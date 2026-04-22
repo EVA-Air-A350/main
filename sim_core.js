@@ -6,11 +6,11 @@
   }
 }(typeof self !== 'undefined' ? self : this, function () {
   function normalizeTokens(raw) {
-    return raw.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return String(raw || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   }
 
   function parseCommand(raw) {
-    const tokens = normalizeTokens(raw || '');
+    const tokens = normalizeTokens(raw);
     if (tokens.length < 2) return { error: 'Command too short.' };
 
     const callsign = tokens[0].toUpperCase();
@@ -30,6 +30,12 @@
 
       if (t === 'c' && tokens[i + 1] === 'es') {
         segments.push({ type: 'engine_start' });
+        i += 2;
+        continue;
+      }
+
+      if (t === 'c' && tokens[i + 1] === 'ct') {
+        segments.push({ type: 'continue_taxi' });
         i += 2;
         continue;
       }
@@ -77,7 +83,8 @@
     return g;
   }
 
-  function resolveDestinationToken(destination) {
+  function resolveDestinationToken(token) {
+    const destination = String(token || '').toLowerCase();
     if (destination === '25r' || destination === 'rwy25r' || destination === '1') return 'rwy25r';
     if (destination === 'b23') return 'gateb23';
     if (destination === 'a1') return 'gatea1';
@@ -87,8 +94,8 @@
   function nearestNodeId(nodes, x, y) {
     let best = null;
     let bestDist = Number.POSITIVE_INFINITY;
-    for (const [id, n] of Object.entries(nodes)) {
-      const d = Math.hypot(n.x - x, n.y - y);
+    for (const [id, node] of Object.entries(nodes)) {
+      const d = Math.hypot(node.x - x, node.y - y);
       if (d < bestDist) {
         bestDist = d;
         best = id;
@@ -97,46 +104,79 @@
     return best;
   }
 
-  function validateRoute({ startNode, via, destination, holdShort, nodes, adjacency }) {
-    const normalizedVia = via.map((t) => t.toLowerCase());
-    const dest = resolveDestinationToken(destination.toLowerCase());
+  function shortestPath(adjacency, from, to) {
+    if (from === to) return [from];
+    const q = [from];
+    const prev = new Map([[from, null]]);
 
-    if (!nodes[startNode]) return { error: `Unknown start node ${startNode}.` };
-
-    for (const token of normalizedVia) {
-      if (!nodes[token]) return { error: `Unknown taxiway ${token}.` };
+    for (let head = 0; head < q.length; head += 1) {
+      const n = q[head];
+      const neighbors = adjacency.get(n);
+      if (!neighbors) continue;
+      for (const next of neighbors) {
+        if (prev.has(next)) continue;
+        prev.set(next, n);
+        if (next === to) {
+          const path = [to];
+          let cur = n;
+          while (cur) {
+            path.push(cur);
+            cur = prev.get(cur);
+          }
+          return path.reverse();
+        }
+        q.push(next);
+      }
     }
 
+    return null;
+  }
+
+  function compileTaxiRoute({ startNode, via, destination, holdShort, nodes, adjacency }) {
+    if (!nodes[startNode]) return { error: `Unknown start node ${startNode}.` };
+
+    const waypoints = via.map((v) => resolveDestinationToken(v));
+    const dest = resolveDestinationToken(destination);
+
+    for (const wp of waypoints) {
+      if (!nodes[wp]) return { error: `Unknown taxiway ${wp}.` };
+    }
     if (!nodes[dest]) return { error: `Unknown destination ${destination}.` };
 
-    const path = [startNode, ...normalizedVia, dest];
-    for (let i = 0; i < path.length - 1; i += 1) {
-      const a = path[i];
-      const b = path[i + 1];
-      if (!adjacency.get(a) || !adjacency.get(a).has(b)) {
-        return { error: `Disconnected route at ${a.toUpperCase()} -> ${b.toUpperCase()}.` };
+    const checkpoints = [...waypoints, dest];
+    let cursor = startNode;
+    let fullPath = [startNode];
+
+    for (const cp of checkpoints) {
+      const segment = shortestPath(adjacency, cursor, cp);
+      if (!segment) {
+        return { error: `No route available from ${cursor.toUpperCase()} to ${cp.toUpperCase()}.` };
       }
+      fullPath = fullPath.concat(segment.slice(1));
+      cursor = cp;
     }
 
     let hs = null;
     if (holdShort) {
-      hs = holdShort.toLowerCase();
+      hs = resolveDestinationToken(holdShort);
       if (!nodes[hs]) return { error: `Unknown hold short point ${holdShort}.` };
-      if (!path.includes(hs)) return { error: `Hold short ${holdShort.toUpperCase()} not on assigned route.` };
+      if (!fullPath.includes(hs)) return { error: `Hold short ${holdShort.toUpperCase()} not on assigned route.` };
     }
 
     return {
-      route: [...normalizedVia, dest],
       destination: dest,
       holdShort: hs,
+      fullPath,
+      route: fullPath.slice(1),
     };
   }
 
   return {
     parseCommand,
     buildAdjacency,
-    validateRoute,
     resolveDestinationToken,
     nearestNodeId,
+    shortestPath,
+    compileTaxiRoute,
   };
 }));

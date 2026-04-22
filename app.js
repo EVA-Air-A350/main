@@ -70,22 +70,25 @@ function log(msg) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function newAircraft(i, ops, seasonBias) {
-  const id = `${['DAL', 'AAL', 'UAL', 'SWA'][i % 4]}${100 + i}`;
-  const departure = ops !== 'arrivals' ? i % 2 === 0 : false;
-  const deiceRequired = departure && Math.random() * 100 < seasonBias * 0.65;
+function generateCallsign(i) {
+  return `${['DAL', 'AAL', 'UAL', 'SWA'][i % 4]}${100 + i}`;
+}
+
+function spawnAircraft(i, ops, seasonBias) {
+  const type = ops === 'departures' ? 'dep' : ops === 'arrivals' ? 'arr' : i % 2 === 0 ? 'dep' : 'arr';
+  const deiceRequired = type === 'dep' && Math.random() * 100 < seasonBias * 0.65;
 
   return {
-    id,
-    x: departure ? TAXIWAY_NODES.gatea1.x + i * 8 : TAXIWAY_NODES.rwy25r.x - i * 9,
-    y: departure ? TAXIWAY_NODES.gatea1.y - i * 6 : TAXIWAY_NODES.rwy25r.y + i * 6,
-    route: [],
-    speed: 0,
-    holdShort: null,
+    id: generateCallsign(i),
+    x: type === 'dep' ? TAXIWAY_NODES.gatea1.x + i * 8 : TAXIWAY_NODES.rwy25r.x - i * 7,
+    y: type === 'dep' ? TAXIWAY_NODES.gatea1.y - i * 6 : TAXIWAY_NODES.rwy25r.y + i * 5,
+    type,
+    state: type === 'dep' ? 'at_gate' : 'arrival_waiting_taxi',
     pushFacing: null,
     engineStarted: false,
-    type: departure ? 'dep' : 'arr',
-    state: departure ? 'at_gate' : 'arrival_inbound',
+    route: [],
+    holdShort: null,
+    speed: 0,
     deiceRequired,
     deiceDone: !deiceRequired,
     deiceTimer: 0,
@@ -95,6 +98,8 @@ function newAircraft(i, ops, seasonBias) {
 function generateSession() {
   aircraft.length = 0;
   deicePadOccupant = null;
+  conflictCooldown = 0;
+
   config = {
     airport: airportEl.value,
     seasonBias: Number(seasonEl.value),
@@ -102,12 +107,9 @@ function generateSession() {
     ops: opsEl.value,
   };
 
-  const count = config.trafficLevel * 2 + 2;
+  const count = 2 + config.trafficLevel * 3;
   for (let i = 0; i < count; i += 1) {
-    const ac = newAircraft(i, config.ops, config.seasonBias);
-    if (config.ops === 'departures' && ac.type === 'arr') continue;
-    if (config.ops === 'arrivals' && ac.type === 'dep') continue;
-    aircraft.push(ac);
+    aircraft.push(spawnAircraft(i, config.ops, config.seasonBias));
   }
 
   if (tickHandle) clearInterval(tickHandle);
@@ -119,11 +121,13 @@ function generateSession() {
 function applySegmentsAtomically(ac, segments) {
   const preview = {
     state: ac.state,
-    engineStarted: ac.engineStarted,
     pushFacing: ac.pushFacing,
+    engineStarted: ac.engineStarted,
     route: ac.route.slice(),
     holdShort: ac.holdShort,
+    speed: ac.speed,
   };
+
   const stagedLogs = [];
 
   for (const seg of segments) {
@@ -141,9 +145,16 @@ function applySegmentsAtomically(ac, segments) {
       continue;
     }
 
+    if (seg.type === 'continue_taxi') {
+      preview.speed = 0.7;
+      if (preview.state === 'holding_short') preview.state = ac.type === 'dep' ? 'taxi_out' : 'taxi_in';
+      stagedLogs.push(`${ac.id}: continue taxi approved.`);
+      continue;
+    }
+
     if (seg.type === 'taxi') {
       const startNode = SimCore.nearestNodeId(TAXIWAY_NODES, ac.x, ac.y);
-      const validated = SimCore.validateRoute({
+      const compiled = SimCore.compileTaxiRoute({
         startNode,
         via: seg.via,
         destination: seg.destination,
@@ -151,28 +162,32 @@ function applySegmentsAtomically(ac, segments) {
         nodes: TAXIWAY_NODES,
         adjacency: ADJ,
       });
-      if (validated.error) return { error: `${ac.id}: ${validated.error}` };
+      if (compiled.error) return { error: `${ac.id}: ${compiled.error}` };
 
-      let route = validated.route.slice();
-      const isDepartureTaxiToRunway = ac.type === 'dep' && validated.destination === 'rwy25r';
-      if (isDepartureTaxiToRunway && ac.deiceRequired && !ac.deiceDone && !route.includes('deice')) {
-        route = ['deice', ...route];
-        stagedLogs.push(`${ac.id}: deice required, inserting DEICE stop.`);
+      let route = compiled.route.slice();
+      if (ac.type === 'dep' && compiled.destination === 'rwy25r' && ac.deiceRequired && !ac.deiceDone && !route.includes('deice')) {
+        const withDeice = SimCore.compileTaxiRoute({
+          startNode,
+          via: ['deice', ...seg.via],
+          destination: seg.destination,
+          holdShort: seg.holdShort,
+          nodes: TAXIWAY_NODES,
+          adjacency: ADJ,
+        });
+        if (withDeice.error) return { error: `${ac.id}: ${withDeice.error}` };
+        route = withDeice.route;
+        stagedLogs.push(`${ac.id}: deice required, inserted DEICE waypoint.`);
       }
 
       preview.route = route;
-      preview.holdShort = validated.holdShort;
+      preview.holdShort = compiled.holdShort;
+      preview.speed = 0.7;
       preview.state = ac.type === 'dep' ? 'taxi_out' : 'taxi_in';
       stagedLogs.push(`${ac.id}: taxi ${seg.destination.toUpperCase()} via ${seg.via.join(' ').toUpperCase()}${preview.holdShort ? ` hold short ${preview.holdShort.toUpperCase()}` : ''}.`);
     }
   }
 
-  ac.state = preview.state;
-  ac.engineStarted = preview.engineStarted;
-  ac.pushFacing = preview.pushFacing;
-  ac.route = preview.route;
-  ac.holdShort = preview.holdShort;
-  ac.speed = ac.route.length > 0 ? 0.7 : 0;
+  Object.assign(ac, preview);
   stagedLogs.forEach(log);
   return { ok: true };
 }
@@ -196,7 +211,6 @@ function runCommand() {
   const result = applySegmentsAtomically(ac, parsed.segments);
   if (result.error) {
     log(`ERR: ${result.error}`);
-    return;
   }
 
   commandEl.value = '';
@@ -206,14 +220,14 @@ function runCommand() {
 function moveAircraft(ac) {
   if (ac.route.length === 0 || ac.speed <= 0) return;
 
-  const nextNodeId = ac.route[0];
-  if (ac.holdShort && nextNodeId === ac.holdShort) {
+  const nextNode = ac.route[0];
+  if (ac.holdShort && nextNode === ac.holdShort) {
     ac.speed = 0;
     ac.state = 'holding_short';
     return;
   }
 
-  const target = TAXIWAY_NODES[nextNodeId];
+  const target = TAXIWAY_NODES[nextNode];
   const dx = target.x - ac.x;
   const dy = target.y - ac.y;
   const dist = Math.hypot(dx, dy);
@@ -223,17 +237,16 @@ function moveAircraft(ac) {
     ac.y = target.y;
     ac.route.shift();
 
-    if (nextNodeId === 'deice' && ac.deiceRequired && !ac.deiceDone) {
-      ac.deiceTimer = 40;
-      ac.speed = 0;
+    if (nextNode === 'deice' && ac.deiceRequired && !ac.deiceDone && !deicePadOccupant) {
+      deicePadOccupant = ac.id;
       ac.state = 'deicing';
-      if (!deicePadOccupant) {
-        deicePadOccupant = ac.id;
-        log(`${ac.id}: deicing started.`);
-      }
+      ac.speed = 0;
+      ac.deiceTimer = 45;
+      log(`${ac.id}: deicing started.`);
+      return;
     }
 
-    if (ac.route.length === 0 && ac.state !== 'deicing') {
+    if (ac.route.length === 0) {
       ac.speed = 0;
       ac.state = ac.type === 'dep' ? 'hold_for_tower' : 'at_gate';
     }
@@ -245,18 +258,20 @@ function moveAircraft(ac) {
 }
 
 function updateDeice() {
-  for (const ac of aircraft) {
-    if (ac.state !== 'deicing') continue;
-    if (deicePadOccupant && deicePadOccupant !== ac.id) continue;
+  if (!deicePadOccupant) return;
+  const ac = aircraft.find((a) => a.id === deicePadOccupant);
+  if (!ac || ac.state !== 'deicing') {
+    deicePadOccupant = null;
+    return;
+  }
 
-    ac.deiceTimer -= 1;
-    if (ac.deiceTimer <= 0) {
-      ac.deiceDone = true;
-      ac.state = 'taxi_out';
-      ac.speed = 0.7;
-      deicePadOccupant = null;
-      log(`${ac.id}: deicing complete.`);
-    }
+  ac.deiceTimer -= 1;
+  if (ac.deiceTimer <= 0) {
+    ac.deiceDone = true;
+    ac.state = 'taxi_out';
+    ac.speed = 0.7;
+    deicePadOccupant = null;
+    log(`${ac.id}: deicing complete.`);
   }
 }
 
@@ -271,13 +286,13 @@ function detectConflicts() {
       const a = aircraft[i];
       const b = aircraft[j];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (d < 15) {
-        log(`ALERT: ground conflict risk ${a.id} / ${b.id}.`);
+      if (d < 12) {
         a.speed = 0;
         b.speed = 0;
         a.state = 'conflict_hold';
         b.state = 'conflict_hold';
         conflictCooldown = 15;
+        log(`ALERT: conflict hold issued for ${a.id}/${b.id}`);
         return;
       }
     }
@@ -285,9 +300,7 @@ function detectConflicts() {
 }
 
 function tick() {
-  for (const ac of aircraft) {
-    moveAircraft(ac);
-  }
+  aircraft.forEach(moveAircraft);
   updateDeice();
   detectConflicts();
   render();

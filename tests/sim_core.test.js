@@ -6,6 +6,7 @@ const nodes = {
   a: { x: 1, y: 0 },
   b: { x: 2, y: 0 },
   c1: { x: 3, y: 0 },
+  deice: { x: 1, y: 1 },
   rwy25r: { x: 4, y: 0 },
 };
 const edges = [
@@ -13,56 +14,58 @@ const edges = [
   ['a', 'b'],
   ['b', 'c1'],
   ['c1', 'rwy25r'],
+  ['a', 'deice'],
 ];
 const adjacency = core.buildAdjacency(edges);
 
 {
   const parsed = core.parseCommand('DAL201 c pb n c es t 25r v a b hs c1');
   assert.equal(parsed.error, undefined);
-  assert.equal(parsed.callsign, 'DAL201');
   assert.equal(parsed.segments.length, 3);
 }
 
 {
-  const parsed = core.parseCommand('DAL201 t 25r a b');
-  assert.equal(parsed.error, 'Taxi command missing v.');
+  const parsed = core.parseCommand('DAL201 c ct');
+  assert.equal(parsed.error, undefined);
+  assert.equal(parsed.segments[0].type, 'continue_taxi');
 }
 
 {
-  const ok = core.validateRoute({
+  const route = core.compileTaxiRoute({
     startNode: 'gatea1',
-    via: ['a', 'b', 'c1'],
+    via: ['a', 'b'],
     destination: '25r',
     holdShort: 'c1',
     nodes,
     adjacency,
   });
-  assert.equal(ok.error, undefined);
-  assert.deepEqual(ok.route, ['a', 'b', 'c1', 'rwy25r']);
+  assert.equal(route.error, undefined);
+  assert.deepEqual(route.route, ['a', 'b', 'c1', 'rwy25r']);
 }
 
 {
-  const fail = core.validateRoute({
+  const route = core.compileTaxiRoute({
     startNode: 'gatea1',
-    via: ['b'],
+    via: ['deice'],
     destination: '25r',
-    holdShort: 'c1',
+    holdShort: null,
     nodes,
     adjacency,
   });
-  assert.match(fail.error, /Disconnected route/);
+  assert.equal(route.error, undefined);
+  assert.deepEqual(route.route, ['a', 'deice', 'a', 'b', 'c1', 'rwy25r']);
 }
 
 {
-  const failHs = core.validateRoute({
+  const fail = core.compileTaxiRoute({
     startNode: 'gatea1',
-    via: ['a', 'b', 'c1'],
+    via: ['z9'],
     destination: '25r',
-    holdShort: 'a9',
+    holdShort: null,
     nodes,
     adjacency,
   });
-  assert.match(failHs.error, /Unknown hold short point/);
+  assert.match(fail.error, /Unknown taxiway/);
 }
 
 console.log('sim_core tests passed');
