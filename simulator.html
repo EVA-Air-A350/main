@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ground Control Sim Beta</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Ground Control Sim (Beta)</h1>
+      <p class="subtitle">Offline-first, lightweight ground control simulator prototype.</p>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>Scenario Setup</h2>
+        <label>
+          Airport
+          <select id="airport">
+            <option value="KSFO">KSFO</option>
+            <option value="KLAX">KLAX</option>
+            <option value="KJFK">KJFK</option>
+          </select>
+        </label>
+        <label>
+          Season / Deice Bias
+          <input id="season" type="range" min="0" max="100" step="1" value="20" />
+          <span id="season-value">20%</span>
+        </label>
+        <label>
+          Traffic Level (1-5)
+          <input id="traffic" type="range" min="1" max="5" step="1" value="2" />
+          <span id="traffic-value">2</span>
+        </label>
+        <label>
+          Operations
+          <select id="ops">
+            <option value="both">Arrivals + Departures</option>
+            <option value="arrivals">Arrivals only</option>
+            <option value="departures">Departures only</option>
+          </select>
+        </label>
+        <button id="generate" type="button">Generate Session</button>
+      </section>
+
+      <section class="sim-area">
+        <canvas id="map" width="980" height="540" aria-label="Ground map"></canvas>
+        <div class="legend">Taxiways: A B C1 F O W3 | RWY 25R hold point: C1/W3</div>
+      </section>
+
+      <section class="panel">
+        <h2>Controller Input</h2>
+        <input id="command" type="text" placeholder="DAL201 c pb n c es t 25r v a b c1 hs c1" />
+        <button id="run-command" type="button">Transmit</button>
+        <h3>Aircraft</h3>
+        <ul id="aircraft-list"></ul>
+        <h3>Event Log</h3>
+        <div id="log" class="log"></div>
+      </section>
+    </main>
+
+    <script src="./sim_core.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

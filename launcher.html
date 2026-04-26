@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ground Control Sim Launcher</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background: #0b1220;
+        color: #e6edf7;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+      }
+      .card {
+        width: min(560px, 92vw);
+        border: 1px solid #30415f;
+        border-radius: 14px;
+        padding: 20px;
+        background: #111b2f;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 1.4rem;
+      }
+      p {
+        color: #c7d3e7;
+        line-height: 1.4;
+      }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        background: #2d67ff;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .hint {
+        margin-top: 8px;
+        font-size: 0.9rem;
+        color: #8fa3c5;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Ground Control Sim — Launcher</h1>
+      <p>
+        This launcher opens a lightweight, self-contained ground control simulator in a new tab.
+        It is designed to run offline on low-power devices, including Chromebooks.
+      </p>
+      <button id="open-btn" type="button">Open Simulator</button>
+      <div class="hint">If pop-ups are blocked, open <code>simulator.html</code> directly.</div>
+    </main>
+
+    <script>
+      document.getElementById('open-btn').addEventListener('click', () => {
+        window.open('./simulator.html', '_blank', 'noopener');
+      });
+    </script>
+  </body>
+</html>
